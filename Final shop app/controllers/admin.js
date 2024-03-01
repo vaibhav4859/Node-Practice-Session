@@ -15,7 +15,7 @@ exports.postAddProduct = (req, res, next) => {
     price,
     description,
     imageUrl,
-    userId: req.user, // if we store whole like this mongoose will store only it's id 
+    userId: req.user, // if we store whole like this mongoose will store only it's id
   });
   product
     .save()
@@ -83,7 +83,7 @@ exports.getProducts = (req, res, next) => {
 };
 
 exports.postDeleteProduct = (req, res, next) => {
-  const {productId} = req.body;
+  const { productId } = req.body;
   Product.findByIdAndDelete(productId)
     .then(() => {
       console.log("DESTROYED PRODUCT");
