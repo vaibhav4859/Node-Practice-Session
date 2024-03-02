@@ -2,6 +2,7 @@ const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const axios = require("axios");
 const User = require("../models/user");
+const { validationResult } = require('express-validator');
 
 exports.getLogin = (req, res, next) => {
   let message = req.flash("error");
@@ -14,6 +15,11 @@ exports.getLogin = (req, res, next) => {
     path: "/login",
     pageTitle: "Login",
     errorMessage: message,
+    oldInput: {
+      email: '',
+      password: ''
+    },
+    validationErrors: []
   });
 };
 
@@ -28,16 +34,44 @@ exports.getSignup = (req, res, next) => {
     path: "/signup",
     pageTitle: "Signup",
     errorMessage: message,
+    oldInput: {
+      email: '',
+      password: '',
+      confirmPassword: ''
+    },
+    validationErrors: []
   });
 };
 
 exports.postLogin = (req, res, next) => {
   const { email, password } = req.body;
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    return res.status(422).render("auth/login", {
+      path: "/login",
+      pageTitle: "Login",
+      errorMessage: errors.array()[0].msg,
+      oldInput: {
+        email: email,
+        password: password,
+      },
+      validationErrors: errors.array(),
+    });
+  }
+
   User.findOne({ email: email.toLowerCase() })
     .then((user) => {
       if (!user) {
-        req.flash("error", "Invalid email or password.");
-        return res.redirect("/login");
+        return res.status(422).render('auth/login', {
+          path: '/login',
+          pageTitle: 'Login',
+          errorMessage: 'Invalid email or password.',
+          oldInput: {
+            email: email,
+            password: password
+          },
+          validationErrors: []
+        });
       }
       bcrypt
         .compare(password, user.password)
@@ -50,8 +84,16 @@ exports.postLogin = (req, res, next) => {
               res.redirect("/");
             });
           }
-          req.flash("error", "Invalid email or password.");
-          res.redirect("/login");
+          return res.status(422).render('auth/login', {
+            path: '/login',
+            pageTitle: 'Login',
+            errorMessage: 'Invalid email or password.',
+            oldInput: {
+              email: email,
+              password: password
+            },
+            validationErrors: []
+          });
         })
         .catch((err) => {
           console.log(err);
@@ -79,57 +121,63 @@ exports.postLogin = (req, res, next) => {
 };
 
 exports.postSignup = (req, res, next) => {
-  const { email, password, confirmPassword } = req.body;
-  User.findOne({ email: email })
-    .then((userDoc) => {
-      if (userDoc) {
-        req.flash(
-          "error",
-          "E-Mail exists already, please pick a different one."
-        );
-        return res.redirect("/signup");
-      }
-      return bcrypt
-        .hash(password, 12)
-        .then((hashedPassword) => {
-          const user = new User({
-            email: email.toLowerCase(),
-            password: hashedPassword,
-            cart: { items: [] },
-          });
-          return user.save();
-        })
-        .then(async (result) => {
-          const response = await axios({
-            method: "post",
-            url: "https://api.sendinblue.com/v3/smtp/email",
-            headers: {
-              "api-key": process.env.API_KEY,
-              "content-type": "application/json",
-            },
-            data: {
-              sender: {
-                name: "Shop-vbv",
-                email: "vsachdeva4859@gmail.com",
-              },
-              to: [
-                {
-                  email: result.email,
-                  name: "vbv",
-                },
-              ],
-              subject: "Account Creation Successfull",
-              htmlContent: `<h1>You successfully signed up at shop-vbv!</h1>`,
-              replyTo: {
-                email: "vsachdeva4859@gmail.com",
-                name: "Shop-vbv",
-              },
-            },
-          });
+  const { email, password } = req.body;
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    console.log(errors.array());
+    return res.status(422).render("auth/signup", {
+      path: "/signup",
+      pageTitle: "Signup",
+      errorMessage: errors.array()[0].msg,
+      oldInput: {
+        email: email,
+        password: password,
+        confirmPassword: req.body.confirmPassword,
+      },
+      validationErrors: errors.array(),
+    });
+  }
 
-          console.log("Email sent successfully:", response.data);
-          res.redirect("/login");
-        });
+  bcrypt
+    .hash(password, 12)
+    .then((hashedPassword) => {
+      const user = new User({
+        email: email.toLowerCase(),
+        password: hashedPassword,
+        cart: { items: [] },
+      });
+      return user.save();
+    })
+    .then(async (result) => {
+      const response = await axios({
+        method: "post",
+        url: "https://api.sendinblue.com/v3/smtp/email",
+        headers: {
+          "api-key": process.env.API_KEY,
+          "content-type": "application/json",
+        },
+        data: {
+          sender: {
+            name: "Shop-vbv",
+            email: "vsachdeva4859@gmail.com",
+          },
+          to: [
+            {
+              email: result.email,
+              name: "vbv",
+            },
+          ],
+          subject: "Account Creation Successfull",
+          htmlContent: `<h1>You successfully signed up at shop-vbv!</h1>`,
+          replyTo: {
+            email: "vsachdeva4859@gmail.com",
+            name: "Shop-vbv",
+          },
+        },
+      });
+
+      console.log("Email sent successfully:", response.data);
+      res.redirect("/login");
     })
     .catch((err) => {
       console.log(err);
@@ -203,7 +251,7 @@ exports.postReset = (req, res, next) => {
             subject: "Password reset",
             htmlContent: `
             <p>You requested a password reset</p>
-            <p>Click this <a href="https://shop-vbv.onrender.com//reset/${token}">link</a> to set a new password.</p>
+            <p>Click this <a href="https://shop-vbv.onrender.com/reset/${token}">link</a> to set a new password.</p>
           `,
             replyTo: {
               email: "vsachdeva4859@gmail.com",
