@@ -1,4 +1,6 @@
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
+const axios = require("axios");
 const User = require("../models/user");
 
 exports.getLogin = (req, res, next) => {
@@ -31,7 +33,7 @@ exports.getSignup = (req, res, next) => {
 
 exports.postLogin = (req, res, next) => {
   const { email, password } = req.body;
-  User.findOne({ email: email })
+  User.findOne({ email: email.toLowerCase() })
     .then((user) => {
       if (!user) {
         req.flash("error", "Invalid email or password.");
@@ -91,13 +93,41 @@ exports.postSignup = (req, res, next) => {
         .hash(password, 12)
         .then((hashedPassword) => {
           const user = new User({
-            email: email,
+            email: email.toLowerCase(),
             password: hashedPassword,
             cart: { items: [] },
           });
           return user.save();
         })
-        .then((result) => {
+        .then(async (result) => {
+          const response = await axios({
+            method: "post",
+            url: "https://api.sendinblue.com/v3/smtp/email",
+            headers: {
+              "api-key": process.env.API_KEY,
+              "content-type": "application/json",
+            },
+            data: {
+              sender: {
+                name: "Shop-vbv",
+                email: "vsachdeva4859@gmail.com",
+              },
+              to: [
+                {
+                  email: result.email,
+                  name: "vbv",
+                },
+              ],
+              subject: "Account Creation Successfull",
+              htmlContent: `<h1>You successfully signed up at shop-vbv!</h1>`,
+              replyTo: {
+                email: "vsachdeva4859@gmail.com",
+                name: "Shop-vbv",
+              },
+            },
+          });
+
+          console.log("Email sent successfully:", response.data);
           res.redirect("/login");
         });
     })
@@ -112,9 +142,132 @@ exports.postLogout = async (req, res, next) => {
     await req.session.destroy();
     // remove the session cookie from browser
     await res.clearCookie("connect.sid");
- 
+
     res.redirect("/login");
   } catch (err) {
     console.log("Error posting logout:", err);
   }
+};
+
+exports.getReset = (req, res, next) => {
+  let message = req.flash("error");
+  if (message.length > 0) {
+    message = message[0];
+  } else {
+    message = null;
+  }
+  res.render("auth/reset", {
+    path: "/reset",
+    pageTitle: "Reset Password",
+    errorMessage: message,
+  });
+};
+
+exports.postReset = (req, res, next) => {
+  crypto.randomBytes(32, (err, buffer) => {
+    if (err) {
+      console.log(err);
+      return res.redirect("/reset");
+    }
+    const token = buffer.toString("hex");
+    User.findOne({ email: req.body.email.toLowerCase() })
+      .then((user) => {
+        if (!user) {
+          req.flash("error", "No account with that email found.");
+          return res.redirect("/reset");
+        }
+        user.resetToken = token;
+        user.resetTokenExpiration = Date.now() + 3600000;
+        return user.save();
+      })
+      .then(async (result) => {
+        res.redirect("/");
+        const response = await axios({
+          method: "post",
+          url: "https://api.sendinblue.com/v3/smtp/email",
+          headers: {
+            "api-key": process.env.API_KEY,
+            "content-type": "application/json",
+          },
+          data: {
+            sender: {
+              name: "Shop-vbv",
+              email: "vsachdeva4859@gmail.com",
+            },
+            to: [
+              {
+                email: req.body.email,
+                name: "vbv",
+              },
+            ],
+            subject: "Password reset",
+            htmlContent: `
+            <p>You requested a password reset</p>
+            <p>Click this <a href="https://shop-vbv.onrender.com//reset/${token}">link</a> to set a new password.</p>
+          `,
+            replyTo: {
+              email: "vsachdeva4859@gmail.com",
+              name: "Shop-vbv",
+            },
+          },
+        });
+
+        console.log("Email sent successfully:", response.data);
+      })
+      .catch((err) => {
+        console.log(err);
+      });
+  });
+};
+
+exports.getNewPassword = (req, res, next) => {
+  const token = req.params.token;
+  User.findOne({ resetToken: token, resetTokenExpiration: { $gt: Date.now() } })
+    .then((user) => {
+      let message = req.flash("error");
+      if (message.length > 0) {
+        message = message[0];
+      } else {
+        message = null;
+      }
+      res.render("auth/new-password", {
+        path: "/new-password",
+        pageTitle: "New Password",
+        errorMessage: message,
+        userId: user._id.toString(),
+        passwordToken: token,
+      });
+    })
+    .catch((err) => {
+      console.log(err);
+    });
+};
+
+exports.postNewPassword = (req, res, next) => {
+  const newPassword = req.body.password;
+  const userId = req.body.userId;
+  const passwordToken = req.body.passwordToken;
+  let resetUser;
+
+  User.findOne({
+    resetToken: passwordToken,
+    resetTokenExpiration: { $gt: Date.now() },
+    _id: userId,
+  })
+    .then((user) => {
+      resetUser = user;
+      return bcrypt.hash(newPassword, 12);
+    })
+    .then((hashedPassword) => {
+      resetUser.password = hashedPassword;
+      resetUser.resetToken = undefined;
+      resetUser.resetTokenExpiration = undefined;
+      return resetUser.save();
+    })
+    .then((result) => {
+      res.redirect("/login");
+    })
+    .catch((err) => {
+      console.log(err);
+    });
 };
